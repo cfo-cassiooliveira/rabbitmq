@@ -116,16 +116,20 @@ check "admin still authenticates after the re-render" docker compose exec -T rab
 echo "== (l) metrics =="
 # Logo após o restart/provisionamento o coletor de métricas ainda não emitiu as séries por fila (e a 1ª leitura pode vir
 # vazia): espera até 60 s pela série da fila de smoke antes de avaliar, em vez de uma leitura única.
-metrics="$(for _ in $(seq 1 30); do
-  out="$(curl -s --max-time 5 http://127.0.0.1:15692/metrics)"
-  if grep -q '^rabbitmq_queue_messages_ready{vhost="dev",queue="smoke-consumer.ping"}' <<<"$out"; then break; fi
+# A saída (~180 KB) vai para um arquivo: passá-la como argumento de `bash -c` estoura o limite de 128 KiB por argumento do
+# Linux (MAX_ARG_STRLEN) e reprovava os checks no CI, sem aparecer no Windows.
+metrics_file="$(mktemp)"
+for _ in $(seq 1 30); do
+  curl -s --max-time 5 http://127.0.0.1:15692/metrics > "$metrics_file"
+  if grep -q '^rabbitmq_queue_messages_ready{vhost="dev",queue="smoke-consumer.ping"}' "$metrics_file"; then break; fi
   sleep 2
-done; printf '%s' "$out")"
+done
 check "/metrics on 15692 responds 200" test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:15692/metrics)" = "200"
 check "/metrics has per-queue metrics (ready, unacked, consumers) for the smoke queue" bash -c \
-  'grep -q "^rabbitmq_queue_messages_ready{vhost=\"dev\",queue=\"smoke-consumer.ping\"}" <<<"$0" && grep -q "^rabbitmq_queue_messages_unacked{vhost=\"dev\",queue=\"smoke-consumer.ping.dlq\"}" <<<"$0" && grep -q "^rabbitmq_queue_consumers{" <<<"$0"' "$metrics"
+  'grep -q "^rabbitmq_queue_messages_ready{vhost=\"dev\",queue=\"smoke-consumer.ping\"}" "$0" && grep -q "^rabbitmq_queue_messages_unacked{vhost=\"dev\",queue=\"smoke-consumer.ping.dlq\"}" "$0" && grep -q "^rabbitmq_queue_consumers{" "$0"' "$metrics_file"
 check "/metrics has memory and disk metrics" bash -c \
-  'grep -q "^rabbitmq_process_resident_memory_bytes " <<<"$0" && grep -q "^rabbitmq_resident_memory_limit_bytes " <<<"$0" && grep -q "^rabbitmq_disk_space_available_bytes " <<<"$0" && grep -q "^rabbitmq_disk_space_available_limit_bytes " <<<"$0"' "$metrics"
+  'grep -q "^rabbitmq_process_resident_memory_bytes " "$0" && grep -q "^rabbitmq_resident_memory_limit_bytes " "$0" && grep -q "^rabbitmq_disk_space_available_bytes " "$0" && grep -q "^rabbitmq_disk_space_available_limit_bytes " "$0"' "$metrics_file"
+rm -f "$metrics_file"
 check "port 15692 is published only on 127.0.0.1" \
   test "$(docker inspect -f '{{range $b := index .NetworkSettings.Ports "15692/tcp"}}{{$b.HostIp}} {{end}}' "$cid" | xargs)" = "127.0.0.1"
 check "rabbitmq-metrics network is internal and has the broker" bash -c \

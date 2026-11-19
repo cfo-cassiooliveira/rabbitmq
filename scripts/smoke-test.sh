@@ -114,7 +114,13 @@ check "admin still authenticates after the re-render" docker compose exec -T rab
 
 # ---------------------------------------------------------------- (l) métricas Prometheus
 echo "== (l) metrics =="
-metrics="$(curl -s http://127.0.0.1:15692/metrics)"
+# Logo após o restart/provisionamento o coletor de métricas ainda não emitiu as séries por fila (e a 1ª leitura pode vir
+# vazia): espera até 60 s pela série da fila de smoke antes de avaliar, em vez de uma leitura única.
+metrics="$(for _ in $(seq 1 30); do
+  out="$(curl -s --max-time 5 http://127.0.0.1:15692/metrics)"
+  if grep -q '^rabbitmq_queue_messages_ready{vhost="dev",queue="smoke-consumer.ping"}' <<<"$out"; then break; fi
+  sleep 2
+done; printf '%s' "$out")"
 check "/metrics on 15692 responds 200" test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:15692/metrics)" = "200"
 check "/metrics has per-queue metrics (ready, unacked, consumers) for the smoke queue" bash -c \
   'grep -q "^rabbitmq_queue_messages_ready{vhost=\"dev\",queue=\"smoke-consumer.ping\"}" <<<"$0" && grep -q "^rabbitmq_queue_messages_unacked{vhost=\"dev\",queue=\"smoke-consumer.ping.dlq\"}" <<<"$0" && grep -q "^rabbitmq_queue_consumers{" <<<"$0"' "$metrics"

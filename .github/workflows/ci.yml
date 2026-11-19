@@ -1,0 +1,116 @@
+# CI do RabbitMQ do Workspace (Art. V; ordem do testing-quality.md; varreduras do security.md).
+# Projeto de infraestrutura: sem build de aplicação; o "teste" é o smoke ponta a ponta com o broker de pé.
+# O que NÃO roda localmente (só aqui): os jobs "smoke" e "images" completos no runner Linux limpo; localmente foram
+# validados actionlint, shellcheck, gitleaks, trivy fs, `docker compose config -q` e o smoke contra o broker já no ar.
+name: ci
+
+on:
+  push:
+    branches: [master, 'DEV-*']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+env:
+  SHELLCHECK_IMAGE: koalaman/shellcheck:v0.10.0@sha256:2097951f02e735b613f4a34de20c40f937a6c8f18ecb170612c88c34517221fb
+  GITLEAKS_IMAGE: zricethezav/gitleaks:v8.28.0@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854
+  TRIVY_IMAGE: aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+  RABBITMQ_IMAGE: rabbitmq:4.3-management@sha256:fd4626e7c8ff066fc2ad8a608fd0364419ca919de00ddaca4bf1159f8350c1c8
+  FLUENTBIT_IMAGE: fluent/fluent-bit:4.2.8@sha256:6806769c10acf11b41d14083b3101a24433b4ca113a1ab7a6b1a1b7cad86a7e8
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker run --rm -v "$PWD:/mnt" -w /mnt "$SHELLCHECK_IMAGE" -S warning scripts/*.sh provisioning/*.sh tests/smoke/*.sh
+
+  secrets:
+    name: gitleaks (segredos em todo o histórico)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - run: docker run --rm -v "$PWD:/repo" "$GITLEAKS_IMAGE" git /repo --no-banner --redact --exit-code 1
+
+  trivy:
+    name: Trivy fs (misconfig do compose/Dockerfiles e segredos)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: >-
+          docker run --rm -v "$PWD:/src" "$TRIVY_IMAGE" fs --scanners misconfig,secret
+          --severity HIGH,CRITICAL --skip-version-check --exit-code 1 /src
+
+  images:
+    name: Trivy image (imagens do compose, por digest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Broker: falha o job com CVE HIGH/CRITICAL que já tenha correção (varredura local: limpo).
+      - name: Broker (bloqueante)
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" image
+          --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --skip-version-check --exit-code 1 "$RABBITMQ_IMAGE"
+      # Coletor (imagem distroless): CRITICAL com correção disponível bloqueia; exceções só em .trivyignore.yaml, uma por
+      # achado, com justificativa e validade. O arquivo de exceções é montado no container do Trivy.
+      - name: Coletor (bloqueante em CRITICAL com correção)
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/.trivyignore.yaml:/ignore/.trivyignore.yaml:ro"
+          "$TRIVY_IMAGE" image --ignorefile /ignore/.trivyignore.yaml --scanners vuln --severity CRITICAL --ignore-unfixed
+          --skip-version-check --exit-code 1 "$FLUENTBIT_IMAGE"
+      # HIGH do coletor: informativo (a imagem oficial traz bibliotecas Debian com correção ainda não publicada, ex. libpq5/libcurl,
+      # fora do caminho de execução do coletor). Vira bloqueante quando a imagem oficial for reconstruída e o relatório ficar limpo.
+      - name: Coletor HIGH (informativo)
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" image
+          --scanners vuln --severity HIGH --ignore-unfixed --skip-version-check --exit-code 0 "$FLUENTBIT_IMAGE"
+
+  compose:
+    name: docker compose config
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # O .env é gerado aqui com segredos aleatórios descartáveis; nunca vem do repositório.
+      - run: ./scripts/generate-env.sh
+      - run: ./scripts/observability-network.sh
+      - run: docker compose config -q
+      - run: docker compose --profile smoke --profile logs-test config -q
+      # Complemento TLS: só valida a sintaxe (os certificados são gerados e testados localmente por scripts/smoke-tls.sh).
+      - run: ./scripts/generate-certs.sh && docker compose -f docker-compose.yml -f docker-compose.tls.yml --profile tls config -q
+
+  smoke:
+    name: broker + provisionamento + smoke (inclui fallback de logs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [shellcheck, compose]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: ./scripts/generate-env.sh
+      # O Graylog real não existe no runner: a rede externa é criada vazia e o coletor apenas retém os logs (fallback).
+      - run: ./scripts/observability-network.sh
+      - run: docker compose up -d --build --wait rabbitmq log-shipper
+      - name: Provisionamento (duas vezes, prova a idempotência)
+        run: docker compose run --rm provisioner && docker compose run --rm provisioner
+      - name: Smoke ponta a ponta (a-e, j, l, m, n com gelf-sink descartável)
+        run: ./scripts/smoke-test.sh
+      - name: Smoke de bordas
+        run: ./scripts/smoke-edge.sh
+      - name: Logs em caso de falha
+        if: failure()
+        run: for service in rabbitmq log-shipper; do docker compose logs --no-color --tail 120 "$service"; done
+      - name: Limpeza
+        if: always()
+        run: docker compose --profile smoke --profile logs-test down -v

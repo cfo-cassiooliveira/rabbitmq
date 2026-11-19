@@ -1,0 +1,164 @@
+# RabbitMQ 4.3 (single-node) para os projetos do C:\Workspace: broker + provisionador.
+# Uso: ./scripts/generate-env.sh && ./scripts/observability-network.sh && docker compose up -d --build     (UI: http://localhost:15672)
+# Outros projetos se conectam pela rede Docker "workspace-messaging" (AMQP em rabbitmq:5672).
+name: rabbitmq
+
+# Base comum dos coletores de log (real e de teste).
+x-log-shipper: &log-shipper
+  # Imagem distroless (sem shell nem curl): sem healthcheck no compose; a vivacidade é sondada de fora (scripts/shipper-api.sh).
+  image: fluent/fluent-bit:4.2.8@sha256:6806769c10acf11b41d14083b3101a24433b4ca113a1ab7a6b1a1b7cad86a7e8
+  mem_limit: 128m
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  read_only: true
+  tmpfs: [/tmp]
+  restart: unless-stopped
+
+services:
+  rabbitmq:
+    # RabbitMQ 4.3.8 (GA, imagem oficial com management). Fixado por digest (OWASP A03).
+    image: rabbitmq:4.3-management@sha256:fd4626e7c8ff066fc2ad8a608fd0364419ca919de00ddaca4bf1159f8350c1c8
+    # Hostname fixo: o nome do nó (e o diretório de dados) depende dele.
+    hostname: rabbitmq
+    # Teto de memória: um serviço não derruba os demais na VM do WSL2 (20 GB, ver ~/.wslconfig).
+    # O watermark do rabbitmq.conf (600MiB) dispara o alarme antes do limite.
+    mem_limit: 1g
+    ports:
+      # Publicadas só em localhost: AMQP e UI/API de management. EPMD (4369) e distribuição (25672) não são publicados.
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+      # Métricas Prometheus (rabbitmq_prometheus): só em localhost; o Prometheus do grafana entra pela rede rabbitmq-metrics.
+      - "127.0.0.1:15692:15692"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      # Log em arquivo JSON (rotação 10 MiB x 5): lido pelo log-shipper e verificável localmente (scripts/logs-fallback-check.sh).
+      - rabbitmq-logs:/var/log/rabbitmq
+      - ./config/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./config/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      # Falha com erro claro (em vez de criar uma pasta) se o render ainda não rodou: ./scripts/generate-env.sh.
+      - type: bind
+        source: ./definitions/definitions.json
+        target: /etc/rabbitmq/definitions.json
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [workspace-messaging, rabbitmq-internal, rabbitmq-metrics]
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_local_alarms"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  provisioner:
+    # Remove o guest e itens obsoletos e valida a topologia (idempotente) pela API de management.
+    build: ./provisioning
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+    environment:
+      RABBITMQ_API_URL: http://rabbitmq:15672
+      RABBITMQ_ADMIN_USER: admin
+      RABBITMQ_ADMIN_PASSWORD: ${RABBITMQ_ADMIN_PASSWORD:?defina RABBITMQ_ADMIN_PASSWORD no .env}
+      DEFINITIONS_FILE: /provisioning/definitions.json
+    volumes:
+      - type: bind
+        source: ./definitions/definitions.json
+        target: /provisioning/definitions.json
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [rabbitmq-internal]
+    restart: "no"
+
+
+  smoke:
+    # Cliente AMQP descartável (pika) do smoke ponta a ponta; só roda com --profile smoke (scripts/smoke-test.sh).
+    profiles: [smoke]
+    build: ./tests/smoke
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+    environment:
+      AMQP_HOST: rabbitmq
+      SMOKE_APP_PASSWORD: ${RABBITMQ_SMOKE_APP_PASSWORD:?defina RABBITMQ_SMOKE_APP_PASSWORD no .env}
+    # Endurecimento: sem privilégios, sistema de arquivos somente leitura e teto de memória (o cliente só usa AMQP).
+    mem_limit: 128m
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [workspace-messaging]
+    restart: "no"
+
+  log-shipper:
+    # Coletor de logs (Fluent Bit 4.2.8, Apache-2.0): lê o arquivo JSON do broker e envia ao Graylog (GELF TCP) com buffer
+    # em disco e retry sem limite; se o Graylog estiver fora, o coletor sobe e retém. Fixado por tag + digest.
+    # Imagem distroless (menos superfície, Art. IV.7): vivacidade e backlog vêm de scripts/shipper-api.sh (ADR-0004).
+    <<: *log-shipper
+    networks: [observability, rabbitmq-metrics]
+    volumes:
+      - rabbitmq-logs:/var/log/rabbitmq:ro
+      - fluentbit-buffer:/fluent-bit/storage
+      - ./config/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./config/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+      - ./config/fluent-bit/level.lua:/fluent-bit/etc/level.lua:ro
+    environment:
+      # Destino GELF: o Graylog do workspace na rede externa "observability" (porta GELF TCP 12201).
+      GELF_HOST: ${GELF_HOST:-graylog}
+      GELF_PORT: ${GELF_PORT:-12201}
+
+  log-shipper-test:
+    # Cópia descartável do coletor para o smoke do fallback (tests/smoke/logs-fallback.sh): mesmo config, destino
+    # gelf-sink, buffer e offsets próprios. Não toca o coletor real nem o Graylog.
+    <<: *log-shipper
+    profiles: [logs-test]
+    networks: [logs-test]
+    volumes:
+      - rabbitmq-logs:/var/log/rabbitmq:ro
+      - fluentbit-buffer-test:/fluent-bit/storage
+      - ./config/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./config/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+      - ./config/fluent-bit/level.lua:/fluent-bit/etc/level.lua:ro
+    environment:
+      GELF_HOST: gelf-sink
+      GELF_PORT: "12201"
+
+  gelf-sink:
+    # Destino GELF TCP de teste (descartável): grava o que recebe em /data/received.jsonl. Só com --profile logs-test.
+    profiles: [logs-test]
+    build: ./tests/smoke/gelf-sink
+    mem_limit: 128m
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - gelf-sink-data:/data
+    networks: [logs-test]
+    restart: "no"
+
+networks:
+  # Rede compartilhada com nome fixo, criada por este projeto: os apps entram com "external: true".
+  workspace-messaging:
+    name: workspace-messaging
+  # Só broker e provisionador (sem saída externa).
+  rabbitmq-internal:
+    internal: true
+  # Métricas Prometheus: interna (sem saída externa), nome fixo. O Prometheus do grafana entrará como "external"
+  # (tarefa F01, ver docs/integration/grafana-inputs.md). Participam o broker (15692) e o coletor de logs (2020).
+  rabbitmq-metrics:
+    name: rabbitmq-metrics
+    internal: true
+  # Rede do Graylog (GELF em graylog:12201), criada por scripts/observability-network.sh se ainda não existir
+  # (o compose do graylog usa o mesmo nome). Só o coletor de logs participa; o broker não.
+  observability:
+    name: observability
+    external: true
+  # Rede isolada do smoke do fallback de logs (coletor de teste e gelf-sink).
+  logs-test:
+    internal: true
+
+volumes:
+  rabbitmq-data:
+  rabbitmq-logs:
+  fluentbit-buffer:
+  fluentbit-buffer-test:
+  gelf-sink-data:

@@ -1,0 +1,10 @@
+# Estende as regras padrão do gitleaks. Cada exceção precisa de justificativa.
+[extend]
+useDefault = true
+
+[[allowlists]]
+# Falso positivo (generic-api-key): a routing key de teste "smoke.ping.sent.v1" não é segredo; aparece no
+# template de definitions e no cliente do smoke.
+description = "routing key de teste do smoke"
+regexTarget = "match"
+regexes = ['''smoke\.ping\.sent\.v1''']

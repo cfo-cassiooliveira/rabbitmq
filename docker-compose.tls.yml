@@ -1,0 +1,50 @@
+# Complemento opcional de TLS (AMQPS 5671). Uso (depois de ./scripts/generate-certs.sh):
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml --profile tls up -d --build
+# Sem este arquivo o broker continua só em texto plano (perfil padrão). Smoke: ./scripts/smoke-tls.sh
+services:
+  rabbitmq:
+    ports:
+      # AMQPS publicada só em localhost.
+      - "127.0.0.1:5671:5671"
+    volumes:
+      - ./config/tls.conf:/etc/rabbitmq/conf.d/20-tls.conf:ro
+      # Só ca.pem, server.pem e server.key; a chave da CA nunca entra no container (monta arquivos, não a pasta).
+      - type: bind
+        source: ./certs/ca.pem
+        target: /etc/rabbitmq/certs/ca.pem
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ./certs/server.pem
+        target: /etc/rabbitmq/certs/server.pem
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ./certs/server.key
+        target: /etc/rabbitmq/certs/server.key
+        read_only: true
+        bind: { create_host_path: false }
+
+  smoke-tls:
+    # Cliente AMQPS descartável (pika) que verifica o servidor contra a CA local; só com --profile tls.
+    profiles: [tls]
+    build: ./tests/smoke
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+    environment:
+      AMQP_HOST: rabbitmq
+      AMQP_TLS_PORT: "5671"
+      AMQP_TLS_CA: /certs/ca.pem
+      SMOKE_APP_PASSWORD: ${RABBITMQ_SMOKE_APP_PASSWORD:?defina RABBITMQ_SMOKE_APP_PASSWORD no .env}
+    volumes:
+      - type: bind
+        source: ./certs/ca.pem
+        target: /certs/ca.pem
+        read_only: true
+        bind: { create_host_path: false }
+    mem_limit: 128m
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [workspace-messaging]
+    restart: "no"

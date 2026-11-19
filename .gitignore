@@ -1,0 +1,15 @@
+# Segredos locais e artefatos gerados (Art. IV.4)
+.env
+.env.*
+!.env.example
+definitions/definitions.json
+definitions/*.json
+!definitions/definitions.template.json
+certs/
+*.key
+*.pem
+*.bak
+# IDE
+.vs/
+.idea/
+backups/

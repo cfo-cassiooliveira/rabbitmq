@@ -1,0 +1,9 @@
+# Exceções do Trivy (uma por achado, com justificativa e validade). Revisar ao atualizar a imagem do coletor.
+vulnerabilities:
+  # libbrotli1 (Debian 13) na imagem distroless do Fluent Bit 4.2.8: já corrigida no Debian (1.1.0-2+deb13u1), mas a
+  # imagem oficial ainda não foi reconstruída (4.2.8 é a última 4.2.x). A biblioteca só descomprime respostas HTTP
+  # com Content-Encoding: br; o coletor não faz requisições HTTP (entrada: tail de arquivo local; saída: GELF TCP
+  # puro), então o caminho vulnerável não é alcançável. Validade: ver expired_at.
+  - id: CVE-2026-111497
+    statement: "libbrotli1 sem caminho de execução alcançável no coletor (sem HTTP client); aguardando nova imagem oficial."
+    expired_at: 2026-12-31

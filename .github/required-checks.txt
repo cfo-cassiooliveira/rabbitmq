@@ -8,3 +8,4 @@ Trivy fs (misconfig do compose/Dockerfiles e segredos)
 Trivy image (imagens do compose, por digest)
 docker compose config
 broker + provisionamento + smoke (inclui fallback de logs)
+smoke TLS (AMQPS 5671, chave 0600 do usuário do broker)

@@ -1,7 +1,8 @@
 # CI do RabbitMQ do Workspace (Art. V; ordem do testing-quality.md; varreduras do security.md).
 # Projeto de infraestrutura: sem build de aplicação; o "teste" é o smoke ponta a ponta com o broker de pé.
-# O que NÃO roda localmente (só aqui): os jobs "smoke" e "images" completos no runner Linux limpo; localmente foram
-# validados actionlint, shellcheck, gitleaks, trivy fs, `docker compose config -q` e o smoke contra o broker já no ar.
+# O que NÃO roda localmente (só aqui): os jobs "smoke", "smoke-tls" e "images" completos no runner Linux limpo; localmente
+# foram validados actionlint, shellcheck, gitleaks, trivy fs, `docker compose config -q` e os smokes contra o broker já no
+# ar (o smoke TLS também num container Linux com usuário não-root, reproduzindo o dono/modo do runner).
 name: ci
 
 on:
@@ -88,7 +89,7 @@ jobs:
       - run: ./scripts/observability-network.sh
       - run: docker compose config -q
       - run: docker compose --profile smoke --profile logs-test config -q
-      # Complemento TLS: só valida a sintaxe (os certificados são gerados e testados localmente por scripts/smoke-tls.sh).
+      # Complemento TLS: aqui só a sintaxe; o fluxo completo roda no job smoke-tls.
       - run: ./scripts/generate-certs.sh && docker compose -f docker-compose.yml -f docker-compose.tls.yml --profile tls config -q
 
   smoke:
@@ -114,3 +115,24 @@ jobs:
       - name: Limpeza
         if: always()
         run: docker compose --profile smoke --profile logs-test down -v
+
+  smoke-tls:
+    name: smoke TLS (AMQPS 5671, chave 0600 do usuário do broker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [shellcheck, compose]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: ./scripts/generate-env.sh
+      - run: ./scripts/observability-network.sh
+      # Só o broker: o smoke TLS recria o broker com o complemento e o devolve ao perfil padrão ao final.
+      - run: docker compose up -d --wait rabbitmq
+      # generate-certs.sh mantém server.key em 0600 e a entrega ao uid 999 do container (o bind mount preserva o dono).
+      - name: Smoke TLS (certificados, AMQPS com peer verificado, texto plano e management intactos)
+        run: ./scripts/smoke-tls.sh
+      - name: Logs em caso de falha
+        if: failure()
+        run: docker compose logs --no-color --tail 120 rabbitmq
+      - name: Limpeza
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.tls.yml --profile tls down -v

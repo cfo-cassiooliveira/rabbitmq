@@ -3,17 +3,28 @@
 # A CA é descartável e só vale para desenvolvimento: clientes que a confiam passam a confiar em QUALQUER certificado
 # emitido por ela, então a chave da CA (ca.key) fica apenas aqui, em 0600, e nunca é montada em container.
 # Não sobrescreve certificados existentes (apague certs/ para renovar). Nenhuma senha/segredo é impresso.
-# Variável opcional: KEY_MODE (padrão 0600). Em runner Linux, onde o bind mount preserva dono e modo, o usuário "rabbitmq"
-# do container não lê uma chave 0600 do host; use KEY_MODE=0644 só em ambiente descartável.
+# Em Linux (runner do CI, WSL) o bind mount preserva dono e modo: uma server.key 0600 do usuário do host não seria legível
+# pelo usuário "rabbitmq" (uid 999) do container. Em vez de afrouxar o modo, a chave continua 0600 e passa a pertencer a
+# esse usuário, via container descartável da própria imagem do broker (só CAP_CHOWN, sem rede). No Git Bash (NTFS, sem
+# modo POSIX) o passo não se aplica.
 # Uso: ./scripts/generate-certs.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
 dir=certs
 days=825
-key_mode="${KEY_MODE:-0600}"
+
+# Entrega a server.key (0600) ao usuário rabbitmq da imagem fixada no compose; o nome é resolvido pelo /etc/passwd da imagem.
+own_server_key_for_broker() {
+  case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 0 ;; esac
+  local image
+  image="$(grep -m1 -oE 'rabbitmq:[^[:space:]"]+@sha256:[0-9a-f]{64}' docker-compose.yml)"
+  docker run --rm --network none --user 0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges:true \
+    --entrypoint chown -v "$PWD/$dir/server.key:/certs/server.key" "$image" rabbitmq:rabbitmq /certs/server.key
+}
 
 if [[ -f "$dir/server.pem" && -f "$dir/ca.pem" ]]; then
+  own_server_key_for_broker
   echo "certs/ already has a CA and a server certificate; nothing changed. Delete certs/ to renew."
   exit 0
 fi
@@ -41,8 +52,8 @@ openssl x509 -req -in "$dir/server.csr" -CA "$dir/ca.pem" -CAkey "$dir/ca.key" -
   -extfile "$dir/server.ext" -out "$dir/server.pem"
 rm -f "$dir/server.csr" "$dir/server.ext" "$dir/ca.srl"
 
-chmod 0600 "$dir/ca.key"
-chmod "$key_mode" "$dir/server.key"
+chmod 0600 "$dir/ca.key" "$dir/server.key"
 chmod 0644 "$dir/ca.pem" "$dir/server.pem"
-echo "certs/ created: ca.pem (trust this in the clients), server.pem, server.key (mode ${key_mode}), ca.key (0600, never mounted)."
 openssl verify -CAfile "$dir/ca.pem" "$dir/server.pem"
+own_server_key_for_broker
+echo "certs/ created: ca.pem (trust this in the clients), server.pem, server.key (0600, owned by the broker user on Linux), ca.key (0600, never mounted)."

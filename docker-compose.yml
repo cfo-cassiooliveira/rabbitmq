@@ -23,6 +23,9 @@ services:
     # Teto de memória: um serviço não derruba os demais na VM do WSL2 (20 GB, ver ~/.wslconfig).
     # O watermark do rabbitmq.conf (600MiB) dispara o alarme antes do limite.
     mem_limit: 1g
+    # Sem ganho de privilégio por binário setuid/setcap (ADR-0003). O entrypoint inicia como root e rebaixa para o usuário
+    # rabbitmq (uid 999) com gosu, que chama setuid/setgid direto (não depende de bit setuid): o rebaixamento continua (smoke a).
+    security_opt: ["no-new-privileges:true"]
     ports:
       # Publicadas só em localhost: AMQP e UI/API de management. EPMD (4369) e distribuição (25672) não são publicados.
       - "127.0.0.1:5672:5672"

@@ -29,9 +29,10 @@ scripts/observability-network.sh   garante a rede externa observability
 scripts/logs-fallback-check.sh   logs locais retidos e backlog do coletor (somente leitura)
 scripts/shipper-api.sh      consulta a API do coletor (imagem distroless, sem shell) a partir de um container descartável
 scripts/backup-definitions.sh   exporta as definitions pela API (saída em backups/, gitignored, 0600)
+scripts/e2e-graylog.sh      e2e real com o Graylog (só local, fora do CI); tests/e2e/graylog_check.py verifica o JSON
 scripts/smoke-test.sh       teste ponta a ponta, incremental (a-e, j, l métricas, m logs, n fallback); tests/smoke/ = cliente pika, gelf-sink/ e logs-fallback.sh
 docs/integration/           insumos Grafana (F01)/Graylog (F02) e add-app.md (usuário, prefixo, policy DLX)
-.github/workflows/ci.yml    shellcheck, gitleaks, trivy fs/image, compose config, smoke; .gitleaks.toml = exceções justificadas
+.github/workflows/ci.yml    shellcheck, gitleaks, trivy fs/image, compose config, smoke, smoke TLS; .gitleaks.toml = exceções justificadas
 docs/adr/                   decisões
 ```
 
@@ -64,3 +65,6 @@ docker compose run --rm provisioner   # reexecuta o provisionamento (idempotente
   (sem o restart o import não roda). O provisionador só apaga usuários/policies dentro dos vhosts do template.
 - TLS (T09): `docker-compose.tls.yml` + `./scripts/generate-certs.sh` + `./scripts/smoke-tls.sh` (AMQPS 5671 só em 127.0.0.1, TLS 1.2+, peer verificado; management 15672 segue sem TLS em dev; `certs/` gitignored).
 - `scripts/smoke-edge.sh` cobre bordas (permissões, render, provisionador); mensagens e nomes de teste dos scripts em inglês.
+- `scripts/e2e-graylog.sh`: e2e REAL broker -> Fluent Bit -> Graylog, **só local** (fora do CI: o runner não tem Graylog); não reinicia
+  nada e exige `../graylog` no ar. Rode ao mudar `config/fluent-bit/`, o log do broker, as imagens ou o pipeline/alertas do RabbitMQ no
+  Graylog. Verificador JSON em `tests/e2e/graylog_check.py` (imagem do smoke, sem rede).

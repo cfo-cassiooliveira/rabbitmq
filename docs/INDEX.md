@@ -15,6 +15,7 @@
 - `docker compose up -d --build` sobe broker, provisionador e coletor de logs
 - `./scripts/smoke-test.sh` teste ponta a ponta (confirm, quorum, ack, DLQ, guest, permissões, health, métricas, fallback de logs)
 - `./scripts/logs-fallback-check.sh` logs retidos localmente e backlog do coletor
+- `./scripts/e2e-graylog.sh` e2e real broker -> Fluent Bit -> Graylog (só local, fora do CI; exige `../graylog` no ar)
 - `./scripts/backup-definitions.sh` exporta as definitions (backups/, fora do git)
 - `./scripts/smoke-edge.sh` bordas; `./scripts/generate-certs.sh` + `./scripts/smoke-tls.sh` TLS opcional (AMQPS); `./scripts/shipper-api.sh` API do coletor; CI em `.github/workflows/ci.yml`
 

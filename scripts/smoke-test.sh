@@ -31,6 +31,15 @@ check "broker healthcheck is healthy" test "$(docker inspect -f '{{.State.Health
 check "ports published only on 127.0.0.1" \
   test -z "$(docker inspect -f '{{range $p, $b := .NetworkSettings.Ports}}{{range $b}}{{.HostIp}}{{"\n"}}{{end}}{{end}}' "$cid" | grep -v '^127\.0\.0\.1$' | grep -v '^$')"
 check "mem_limit is 1g" test "$(docker inspect -f '{{.HostConfig.Memory}}' "$cid")" = "1073741824"
+# no-new-privileges ligado e o broker (beam.smp) rodando como o usuário rabbitmq (uid 999) depois do rebaixamento do entrypoint.
+# Confere só o PID 1: o entrypoint faz exec do gosu até o beam.smp do broker. As CLIs (healthcheck e `exec` dos
+# smokes) sobem outras VMs Erlang, também chamadas beam.smp e como root, que não podem entrar na verificação.
+check "no-new-privileges is set on the broker" bash -c 'docker inspect -f "{{.HostConfig.SecurityOpt}}" "$0" | grep -q "no-new-privileges:true"' "$cid"
+check "broker process (PID 1, beam.smp) has NoNewPrivs=1 and runs as uid 999" docker compose exec -T rabbitmq bash -c '
+  status=/proc/1/status
+  grep -q "^Name:[[:space:]]*beam.smp$" "$status" &&
+    grep -q "^NoNewPrivs:[[:space:]]*1$" "$status" &&
+    grep -qE "^Uid:([[:space:]]+999){4}$" "$status"'
 check "management API returns 200 for admin" test "$(http_status admin "$admin_password" /overview)" = "200"
 check "workspace-messaging network exists" ./scripts/messaging-network.sh
 

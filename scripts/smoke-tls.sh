@@ -2,6 +2,7 @@
 # Smoke do profile TLS (AMQPS 5671): gera os certificados (se faltarem), sobe o broker com o complemento TLS, roda o
 # cliente pika verificando a CA e confere que o texto plano e a UI de management (sem TLS em dev) continuam funcionando.
 # Ao final o broker volta ao perfil padrão (sem TLS), a menos que KEEP_TLS=1. Requer o .env e o broker já criado.
+# Roda também no CI (job "smoke TLS" do .github/workflows/ci.yml), num runner Linux com usuário não-root.
 # Uso: ./scripts/smoke-tls.sh      (não rode junto com outro smoke: ele recria o broker)
 set -uo pipefail
 
@@ -34,8 +35,13 @@ echo "== (t) TLS (AMQPS) =="
 check "certs: ca.key is never mounted into the container" bash -c '! grep -q "ca.key" docker-compose.tls.yml'
 # NTFS (Git Bash no Windows) não guarda modo POSIX: a permissão 0600 só é verificável em Linux/WSL.
 case "$(uname -s)" in
-  MINGW*|MSYS*|CYGWIN*) echo "SKIP  certs: key file modes (NTFS does not keep POSIX modes; checked on Linux/WSL)" ;;
-  *) check "certs: ca.key and server.key are not readable by group/others (0600)" bash -c '[[ "$(stat -c %a certs/ca.key)" == "600" ]] && [[ "$(stat -c %a certs/server.key)" == "600" ]]' ;;
+  MINGW*|MSYS*|CYGWIN*) echo "SKIP  certs: key file modes and owner (NTFS does not keep POSIX modes; checked on Linux/WSL and in CI)" ;;
+  *)
+    check "certs: ca.key and server.key are not readable by group/others (0600)" bash -c '[[ "$(stat -c %a certs/ca.key)" == "600" ]] && [[ "$(stat -c %a certs/server.key)" == "600" ]]'
+    # O bind mount preserva o dono: a chave pertence ao usuário rabbitmq (uid 999) do container, não ao usuário do host.
+    check "certs: server.key is owned by the broker user (uid 999), ca.key stays with the host user" bash -c \
+      '[[ "$(stat -c %u certs/server.key)" == "999" ]] && [[ "$(stat -c %u certs/ca.key)" == "$(id -u)" ]]'
+    ;;
 esac
 check "certs: server certificate has SAN localhost, rabbitmq and 127.0.0.1" bash -c \
   'out="$(openssl x509 -in certs/server.pem -noout -ext subjectAltName)"; grep -q "DNS:localhost" <<<"$out" && grep -q "DNS:rabbitmq" <<<"$out" && grep -q "IP Address:127.0.0.1" <<<"$out"'

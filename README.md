@@ -56,6 +56,12 @@ Graylog fora, o coletor continua de pé e retém. `./scripts/logs-fallback-check
 `./tests/smoke/logs-fallback.sh` prova o fallback com um `gelf-sink` descartável (não toca o Graylog real).
 Como a imagem do coletor não tem shell, sua API interna é consultada de fora por `./scripts/shipper-api.sh` (ADR-0004).
 
+**E2E real com o Graylog (só local)**: `./scripts/e2e-graylog.sh` gera logins recusados reais (management e AMQP, usuários
+fictícios `e2e-nobody-<run>-*`) sem reiniciar nada e confere na API de busca do Graylog o stream `RabbitMQ - Infra` (e nenhum outro),
+`service_name=rabbitmq`, nível 3/4, o texto real e as consultas dos alertas. Requer o broker, o coletor e o `../graylog` no ar
+(senha lida de `../graylog/.env`, nunca impressa); falha clara se o Graylog estiver fora. Não roda no CI (o runner não tem Graylog).
+Rode ao mudar o coletor, o log do broker, a imagem ou o pipeline/alertas do RabbitMQ no Graylog (ADR-0004, Atualização DEV-004).
+
 ## Observabilidade
 
 Métricas em `15692` (plugin `rabbitmq_prometheus`); insumos para dashboards e alertas do Grafana em
@@ -97,7 +103,7 @@ A chave da CA (`ca.key`) nunca é montada no container. Fora de dev o TLS é obr
 
 `.github/workflows/ci.yml` (actions fixadas por SHA, imagens por digest, `permissions: contents: read`): ShellCheck, gitleaks
 (histórico), Trivy `fs` e `image`, `docker compose config` e o smoke completo (`smoke-test.sh`, `smoke-edge.sh`) com `.env` gerado no job
-e sem Graylog real. Exceções de varredura: `.gitleaks.toml` (routing key de teste, falso positivo) e `.trivyignore.yaml` (uma por achado, com justificativa e validade). O Trivy da imagem do coletor bloqueia CRITICAL com correção disponível. O smoke TLS (`smoke-tls.sh`) roda só localmente: no runner Linux a chave 0600 do host não é legível pelo usuário do container, e recriar o broker no CI tornaria o job frágil.
+e sem Graylog real. Exceções de varredura: `.gitleaks.toml` (routing key de teste, falso positivo) e `.trivyignore.yaml` (uma por achado, com justificativa e validade). O Trivy da imagem do coletor bloqueia CRITICAL com correção disponível. O smoke TLS (`smoke-tls.sh`) roda no job `smoke-tls`: em Linux o `generate-certs.sh` mantém a `server.key` em 0600 e a entrega ao usuário `rabbitmq` (uid 999) do container, porque o bind mount preserva o dono (ADR-0003).
 
 ## Próxima fase
 

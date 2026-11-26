@@ -37,3 +37,32 @@ docker compose run --rm provisioner    # remove obsoletos e valida; idempotente
 
 A app conecta em `rabbitmq:5672` (rede Docker `workspace-messaging`, vhost `dev`) com `ClientProvidedName` do serviço.
 Remover uma app: apague as entradas do template, repita o fluxo; o provisionador remove usuário e policy dentro dos vhosts do template.
+
+## Exemplo real: `cadastro-app` (spec 002, importação em lote)
+
+Permissões mais estreitas que o prefixo, porque o app só publica e consome: usuário `cadastro-app` **sem configure**
+(a topologia é do template, não do app), `write` só em `^(cadastro\.events|cadastro\.retry)$` e `read` só em
+`^cadastro\.user-import-lines$`. A senha é `RABBITMQ_CADASTRO_APP_PASSWORD` no `.env` (gerada por `scripts/generate-env.sh`,
+que também a acrescenta a um `.env` antigo); o hash vai ao `definitions.json` pelo render. O app lê a senha do próprio cofre.
+
+**Atenção (sem configure):** o `cadastro-app` NÃO pode chamar `QueueDeclare`/`ExchangeDeclare` ativos (nem `QueueBind`/`QueueDelete`): o
+broker responde 403 e fecha o canal. A topologia vem do `definitions`; o app só faz declaração passiva (`passive: true`) ou nenhuma
+declaração, publica em `cadastro.events`/`cadastro.retry` e consome de `cadastro.user-import-lines`.
+
+| Item | Valor |
+|---|---|
+| Exchanges (topic) | `cadastro.events`, `cadastro.retry`, `cadastro.dlx` |
+| Filas (quorum) | `cadastro.user-import-lines`, `.retry`, `.dlq` |
+| Bindings | `cadastro.events` e `cadastro.retry` -> fila principal e `.retry` com a key `cadastro.user-import-line.accepted.v1`; `cadastro.dlx` -> `.dlq` com `#` |
+| Policy `cadastro-dlx` | fila principal: DLX `cadastro.dlx`, `at-least-once`, `overflow: reject-publish` |
+| Policy `cadastro-retry` | fila `.retry`: `message-ttl` 30 s e DLX `cadastro.events` (a mensagem volta à fila principal) |
+| Operator policy `cadastro-limits` | fila principal: `delivery-limit` 5 |
+
+Por que `cadastro-limits` é operator policy: só uma policy se aplica por fila, então o `delivery-limit` não pode ser
+uma segunda policy sobre a mesma fila; a operator policy é mesclada com a `cadastro-dlx`. O import de definitions
+ignora `operator_policies`: o provisionador as aplica (e remove as obsoletas) pela API.
+
+Fluxo do consumidor: falha transitória -> publica em `cadastro.retry` (mesma routing key) e dá ack na original; depois de
+30 s a mensagem volta à fila principal. Falha definitiva (ou `delivery-limit` esgotado) -> `basic_nack(requeue=false)`
+-> `cadastro.dlx` -> `cadastro.user-import-lines.dlq`. O contador de ciclos (até 5) é do app. Verificação: seção **o** do
+`scripts/smoke-test.sh`.

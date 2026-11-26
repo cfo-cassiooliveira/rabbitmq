@@ -1,4 +1,4 @@
-"""Smoke AMQP ponta a ponta do broker (pika). Fases: main | persist-publish | persist-verify | cleanup | tls (AMQPS).
+"""Smoke AMQP ponta a ponta do broker (pika). Fases: main | persist-publish | persist-verify | cleanup | tls (AMQPS) | cadastro-permissions | cadastro-retry | cadastro-dlq.
 
 Roda em container descartável (compose profile "smoke"), só com a credencial do smoke-app (sem acesso à API de
 management; o estado das filas é verificado pelo scripts/smoke-test.sh). Nada sensível é impresso.
@@ -257,6 +257,144 @@ def phase_cleanup():
     connection.close()
 
 
+CADASTRO_EVENTS = "cadastro.events"
+CADASTRO_RETRY = "cadastro.retry"
+CADASTRO_QUEUE = "cadastro.user-import-lines"
+CADASTRO_KEY = "cadastro.user-import-line.accepted.v1"
+
+
+def cadastro_app():
+    return connect("cadastro-app", os.environ["CADASTRO_APP_PASSWORD"],
+                   retries=int(os.environ.get("CONNECT_RETRIES", "1")))
+
+
+def cadastro_publish(channel, exchange, body, expiration=None):
+    """Publica persistente, com confirm e mandatory, como o relay do Cadastro faz."""
+    channel.basic_publish(
+        exchange, CADASTRO_KEY, body,
+        pika.BasicProperties(delivery_mode=2, content_type="application/json", expiration=expiration),
+        mandatory=True,
+    )
+
+
+def refused_for_cadastro(action, confirm=False):
+    """Executa action numa conexão nova do cadastro-app e confirma o fechamento do canal com 403.
+
+    Com confirm=True o canal usa publisher confirms: a recusa de um publish chega de forma síncrona."""
+    connection = cadastro_app()
+    try:
+        channel = connection.channel()
+        if confirm:
+            channel.confirm_delivery()
+        action(channel)
+    except pe.ChannelClosedByBroker as exc:
+        return exc.reply_code == 403
+    except pe.AMQPError:
+        return False
+    finally:
+        if connection.is_open:
+            connection.close()
+    return False
+
+
+def phase_cadastro_permissions():
+    """Permissões exatas do cadastro-app: publica nos exchanges permitidos, lê só a fila principal, nada de configure."""
+    connection = cadastro_app()
+    channel = connection.channel()
+    channel.confirm_delivery()
+    channel.queue_purge(CADASTRO_QUEUE)
+    body = f"cadastro-{RUN_ID}".encode()
+    cadastro_publish(channel, CADASTRO_EVENTS, body)
+    method, _, received = get_one(channel, CADASTRO_QUEUE)
+    check("cadastro-app publishes to cadastro.events and consumes cadastro.user-import-lines", received == body)
+    if method:
+        channel.basic_ack(method.delivery_tag)
+    connection.close()
+
+    # Sem configure: publish e consume acima não declararam nada; a declaração passiva também precisa funcionar.
+    passive_connection = cadastro_app()
+    try:
+        passive_connection.channel().queue_declare(CADASTRO_QUEUE, passive=True)
+        passive_ok = True
+    except pe.AMQPError:
+        passive_ok = False
+    finally:
+        if passive_connection.is_open:
+            passive_connection.close()
+    check("cadastro-app passive declare of the main queue works without configure", passive_ok)
+
+    # Publish isolado (sem declaração depois): o 403 só pode vir da permissão de write.
+    check("cadastro-app cannot publish to cadastro.dlx (403 from write, confirm + mandatory)",
+          refused_for_cadastro(lambda ch: ch.basic_publish("cadastro.dlx", "x", b"x", mandatory=True), confirm=True))
+    check("cadastro-app cannot publish to smoke.events (403 from write, confirm + mandatory)",
+          refused_for_cadastro(lambda ch: ch.basic_publish("smoke.events", "x", b"x", mandatory=True), confirm=True))
+    check("cadastro-app cannot declare a queue with the prefix (configure denied, 403)",
+          refused_for_cadastro(lambda ch: ch.queue_declare("cadastro.rogue")))
+    check("cadastro-app cannot declare an exchange (configure denied, 403)",
+          refused_for_cadastro(lambda ch: ch.exchange_declare("cadastro.rogue", "topic")))
+    check("cadastro-app cannot bind a queue (403)",
+          refused_for_cadastro(lambda ch: ch.queue_bind(CADASTRO_QUEUE, CADASTRO_EVENTS, "rogue.#")))
+    check("cadastro-app cannot read the retry queue (403)",
+          refused_for_cadastro(lambda ch: ch.basic_get("cadastro.user-import-lines.retry")))
+    check("cadastro-app cannot read the DLQ (403)",
+          refused_for_cadastro(lambda ch: ch.basic_get("cadastro.user-import-lines.dlq")))
+    check("cadastro-app cannot read smoke queues (403)",
+          refused_for_cadastro(lambda ch: ch.basic_get(PING_QUEUE)))
+    check("cadastro-app cannot delete the main queue (403)",
+          refused_for_cadastro(lambda ch: ch.queue_delete(CADASTRO_QUEUE)))
+
+
+def phase_cadastro_retry():
+    """Retry: a mensagem republicada em cadastro.retry volta à fila principal depois do TTL (expiration curta no teste)."""
+    connection = cadastro_app()
+    channel = connection.channel()
+    channel.confirm_delivery()
+    channel.queue_purge(CADASTRO_QUEUE)
+    body = f"retry-{RUN_ID}".encode()
+    cadastro_publish(channel, CADASTRO_EVENTS, body)
+    method, _, received = get_one(channel, CADASTRO_QUEUE)
+    check("retry: message is delivered from the main queue", received == body)
+    # Falha transitória: o consumidor republica no exchange de retry e confirma a original (padrão do plano).
+    cadastro_publish(channel, CADASTRO_RETRY, body, expiration="1000")
+    if method:
+        channel.basic_ack(method.delivery_tag)
+    check("retry: main queue is empty right after the retry publish",
+          channel.basic_get(CADASTRO_QUEUE, auto_ack=False)[0] is None)
+    method, _, again = get_one(channel, CADASTRO_QUEUE, timeout=20)
+    check("retry: message returns to the main queue after the TTL (dead-letter via cadastro.events)", again == body)
+    if method:
+        channel.basic_ack(method.delivery_tag)
+    connection.close()
+
+
+def phase_cadastro_dlq():
+    """DLQ: nack sem requeue e delivery-limit esgotado levam a mensagem à DLQ (conferida pela API no smoke-test.sh)."""
+    connection = cadastro_app()
+    channel = connection.channel()
+    channel.confirm_delivery()
+    channel.queue_purge(CADASTRO_QUEUE)
+    cadastro_publish(channel, CADASTRO_EVENTS, f"reject-{RUN_ID}".encode())
+    method, _, _ = get_one(channel, CADASTRO_QUEUE)
+    check("dlq: message to be rejected is delivered", method is not None)
+    if method:
+        channel.basic_nack(method.delivery_tag, requeue=False)
+    cadastro_publish(channel, CADASTRO_EVENTS, f"poison-{RUN_ID}".encode())
+    deliveries = 0
+    # Mensagem que nunca é confirmada: o canal fecha com a entrega pendente (devolução). O nack com requeue=true não
+    # conta no delivery-limit do 4.x, só a devolução por canal/conexão fechada. Ao passar de 5 devoluções, o broker faz
+    # o dead-letter (operator policy cadastro-limits): 1 entrega + 5 devoluções = 6 entregas.
+    for _ in range(12):
+        attempt = connection.channel()
+        attempt.basic_qos(prefetch_count=1)
+        method, _, _ = get_one(attempt, CADASTRO_QUEUE, timeout=3)
+        if method is None:
+            break
+        deliveries += 1
+        attempt.close()
+    check("dlq: poison message is dead-lettered after the delivery limit (6 deliveries)", deliveries == 6)
+    connection.close()
+
+
 def _tls_context(minimum=None, maximum=None):
     """Contexto TLS que verifica o servidor contra a CA local (AMQP_TLS_CA) e o nome do host."""
     context = ssl.create_default_context(cafile=os.environ["AMQP_TLS_CA"])
@@ -318,7 +456,9 @@ def phase_tls():
 
 
 PHASES = {"main": phase_main, "persist-publish": phase_persist_publish,
-          "persist-verify": phase_persist_verify, "cleanup": phase_cleanup, "tls": phase_tls}
+          "persist-verify": phase_persist_verify, "cleanup": phase_cleanup, "tls": phase_tls,
+          "cadastro-permissions": phase_cadastro_permissions, "cadastro-retry": phase_cadastro_retry,
+          "cadastro-dlq": phase_cadastro_dlq}
 
 if __name__ == "__main__":
     name = sys.argv[1] if len(sys.argv) > 1 else "main"

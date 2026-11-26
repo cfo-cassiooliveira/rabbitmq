@@ -31,12 +31,14 @@ password_hash() {
 
 admin_password="$(env_value RABBITMQ_ADMIN_PASSWORD)"
 smoke_password="$(env_value RABBITMQ_SMOKE_APP_PASSWORD)"
-[[ -n "$admin_password" && -n "$smoke_password" ]] || { echo "passwords missing in .env" >&2; exit 1; }
+cadastro_password="$(env_value RABBITMQ_CADASTRO_APP_PASSWORD)"
+[[ -n "$admin_password" && -n "$smoke_password" && -n "$cadastro_password" ]] || { echo "passwords missing in .env" >&2; exit 1; }
 
 output="definitions/definitions.json"
 # Os hashes são base64 ([A-Za-z0-9+/=]), seguros como substituição no sed com delimitador "|".
 sed -e "s|__ADMIN_PASSWORD_HASH__|$(password_hash "$admin_password")|" \
     -e "s|__SMOKE_APP_PASSWORD_HASH__|$(password_hash "$smoke_password")|" \
+    -e "s|__CADASTRO_APP_PASSWORD_HASH__|$(password_hash "$cadastro_password")|" \
     definitions/definitions.template.json > "${output}.tmp"
 
 if grep -q '__[A-Z_]*__' "${output}.tmp"; then

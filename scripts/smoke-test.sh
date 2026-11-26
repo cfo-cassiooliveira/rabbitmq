@@ -4,7 +4,7 @@
 # Seções atuais: (a) portas, healthcheck, UI/API; (b) guest negado; (c) render das definitions; (d) AMQP (pika);
 # (e) provisionador idempotente; (j) fluxo de mudança do template (render, restart, provisionador).
 # (l) métricas Prometheus; (m) logs em arquivo e coletor; (n) fallback de logs com gelf-sink descartável
-# (tests/smoke/logs-fallback.sh, ~2 min; SKIP_LOGS_FALLBACK=1 pula). Bordas em scripts/smoke-edge.sh.
+# (tests/smoke/logs-fallback.sh, ~2 min; SKIP_LOGS_FALLBACK=1 pula); (o) cadastro-app (permissões, retry, DLQ). Bordas em scripts/smoke-edge.sh.
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
@@ -159,7 +159,7 @@ check "only the log-shipper is on the observability network" bash -c \
   'n="$(docker network inspect observability -f "{{range .Containers}}{{.Name}} {{end}}")"; grep -q rabbitmq-log-shipper-1 <<<"$n" && ! grep -q rabbitmq-rabbitmq-1 <<<"$n"'
 check "logs-fallback-check.sh lists local logs and backlog" bash -c './scripts/logs-fallback-check.sh | grep -q "^backlog_chunks="'
 check "log file was read (not empty)" test -s "$log_file"
-check "no passwords in the local log file" bash -c '! grep -qF -e "$0" -e "$1" "$2"' "$admin_password" "$smoke_password" "$log_file"
+check "no passwords in the local log file" bash -c '! grep -qF -e "$0" -e "$1" -e "$2" "$3"' "$admin_password" "$smoke_password" "$(env_value RABBITMQ_CADASTRO_APP_PASSWORD)" "$log_file"
 
 # ---------------------------------------------------------------- (n) fallback de logs (gelf-sink descartável)
 if [[ "${SKIP_LOGS_FALLBACK:-0}" == "1" ]]; then
@@ -168,6 +168,52 @@ else
   if ./tests/smoke/logs-fallback.sh; then pass "logs fallback smoke (tests/smoke/logs-fallback.sh)"; else fail "logs fallback smoke (tests/smoke/logs-fallback.sh)"; fi
 fi
 
+
+# ---------------------------------------------------------------- (o) cadastro-app: permissões, retry e DLQ
+echo "== (o) cadastro-app =="
+cadastro_password="$(env_value RABBITMQ_CADASTRO_APP_PASSWORD)"
+check "cadastro-app authenticates" docker compose exec -T rabbitmq rabbitmqctl -q authenticate_user cadastro-app "$cadastro_password"
+check "cadastro-app wrong password is rejected for AMQP" bash -c "! docker compose exec -T rabbitmq rabbitmqctl -q authenticate_user cadastro-app wrong-password"
+check "cadastro-app has no management tag (API 401/403)" test "$(http_status cadastro-app "$cadastro_password" /overview)" -ge 401
+cadastro_perm="$(api_json /permissions/dev/cadastro-app)"
+# O JSON da API escapa a barra invertida (duas barras); os trechos esperados ficam em variáveis (sem 3º nível de escape).
+expect_write='"write":"^(cadastro\\.events|cadastro\\.retry)$"'
+expect_read='"read":"^cadastro\\.user-import-lines$"'
+check "cadastro-app permissions are exact (configure none; write events|retry; read main queue)" bash -c \
+  'grep -qF "\"configure\":\"\"" <<<"$0" && grep -qF -e "$1" <<<"$0" && grep -qF -e "$2" <<<"$0"' "$cadastro_perm" "$expect_write" "$expect_read"
+for queue in cadastro.user-import-lines cadastro.user-import-lines.retry cadastro.user-import-lines.dlq; do
+  check "queue ${queue} is quorum" bash -c 'grep -q "\"type\":\"quorum\"" <<<"$0"' "$(api_json "/queues/dev/${queue}")"
+done
+main_queue_json="$(api_json /queues/dev/cadastro.user-import-lines)"
+retry_queue_json="$(api_json /queues/dev/cadastro.user-import-lines.retry)"
+check "cadastro-dlx policy applies to the main queue (DLX, at-least-once, reject-publish)" bash -c \
+  'grep -q "\"policy\":\"cadastro-dlx\"" <<<"$0" && grep -q "\"dead-letter-exchange\":\"cadastro.dlx\"" <<<"$0" && grep -q "\"dead-letter-strategy\":\"at-least-once\"" <<<"$0" && grep -q "\"overflow\":\"reject-publish\"" <<<"$0"' "$main_queue_json"
+check "cadastro-limits operator policy applies delivery-limit 5 to the main queue" bash -c \
+  'grep -q "\"operator_policy\":\"cadastro-limits\"" <<<"$0" && grep -q "\"delivery-limit\":5" <<<"$0"' "$main_queue_json"
+check "cadastro-retry policy applies TTL 30 s and DLX cadastro.events to the retry queue" bash -c \
+  'grep -q "\"policy\":\"cadastro-retry\"" <<<"$0" && grep -q "\"message-ttl\":30000" <<<"$0" && grep -q "\"dead-letter-exchange\":\"cadastro.events\"" <<<"$0"' "$retry_queue_json"
+run_cadastro_phase() {
+  local out rc
+  out="$(timeout 120 docker compose --profile smoke run --rm -T smoke "$1" 2>&1)"; rc=$?
+  grep -E '^(PASS|FAIL)  ' <<<"$out"
+  failures=$((failures + $(grep -c '^FAIL  ' <<<"$out")))
+  if ! grep -q '^PASS  ' <<<"$out"; then fail "AMQP phase $1 produced no PASS line"; fi
+  if [[ "$rc" != "0" ]] && ! grep -q '^FAIL  ' <<<"$out"; then fail "AMQP phase $1 exited with code $rc"; fi
+}
+dlq_api="/queues/dev/cadastro.user-import-lines.dlq"
+purge_dlq() { printf 'user = "admin:%s"\n' "$admin_password" | curl -s -o /dev/null -X DELETE -K - "${api_url}${dlq_api}/contents"; }
+purge_dlq
+run_cadastro_phase cadastro-permissions
+run_cadastro_phase cadastro-retry
+run_cadastro_phase cadastro-dlq
+# A API atualiza estatísticas a cada ~5 s: espera (com timeout) a contagem convergir em vez de dormir um tempo fixo.
+queue_messages() { api_json "$1" | grep -o '"messages":[0-9]*' | head -n1 | cut -d: -f2; }
+wait_for() { local timeout="$1"; shift; local end=$((SECONDS + timeout)); until "$@"; do (( SECONDS >= end )) && return 1; sleep 1; done; }
+dlq_has_two() { [[ "$(queue_messages "$dlq_api")" == "2" ]]; }
+check "DLQ holds the 2 dead-lettered messages (nack requeue=false and delivery limit exhausted)" wait_for 30 dlq_has_two
+purge_dlq
+check "main and retry queues are empty after the cadastro phases" bash -c \
+  'grep -q "\"messages\":0," <<<"$0" && grep -q "\"messages\":0," <<<"$1"' "$(api_json /queues/dev/cadastro.user-import-lines)" "$(api_json /queues/dev/cadastro.user-import-lines.retry)"
 
 echo
 if [[ "$failures" -eq 0 ]]; then echo "OK: all tests passed."; else echo "FAILED: ${failures} test(s)."; exit 1; fi

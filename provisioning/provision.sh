@@ -90,6 +90,30 @@ prune_policies() {
   done < <(api GET /policies | jq -r '.[] | [.vhost, .name] | @tsv')
 }
 
+# O import de definitions ignora "operator_policies": o provisionador as aplica pela API (PUT é idempotente) e remove
+# as obsoletas dos vhosts do template. Operator policy mescla com a policy da fila; usada para o delivery-limit.
+sync_operator_policies() {
+  local vhost name body expected managed_vhosts
+  while IFS= read -r body; do
+    [[ -z "$body" ]] && continue
+    vhost="$(jq -r '.vhost' <<<"$body")"; name="$(jq -r '.name' <<<"$body")"
+    curl_auth | curl -sS --fail-with-body -K - -H "content-type: application/json" -X PUT \
+      --data-binary "$(jq -c '{pattern, definition, priority, "apply-to": .["apply-to"]}' <<<"$body")" \
+      "${RABBITMQ_API_URL}/api/operator-policies/$(uri "$vhost")/$(uri "$name")" >/dev/null ||
+    { echo "[provision] operator policy ${vhost}/${name} failed" >&2; return 1; }
+  done < <(jq -c '(.operator_policies // [])[]' "$DEFINITIONS_FILE")
+  expected="$(jq -r '(.operator_policies // [])[] | "\(.vhost)/\(.name)"' "$DEFINITIONS_FILE")"
+  managed_vhosts="$(jq -r '.vhosts[].name' "$DEFINITIONS_FILE")"
+  while IFS=$'\t' read -r vhost name; do
+    [[ -z "$name" ]] && continue
+    grep -qxF "$vhost" <<<"$managed_vhosts" || continue
+    if ! grep -qxF "${vhost}/${name}" <<<"$expected"; then
+      api DELETE "/operator-policies/$(uri "$vhost")/$(uri "$name")" >/dev/null
+      log "operator policy removed: ${vhost}/${name}"
+    fi
+  done < <(api GET /operator-policies | jq -r '.[] | [.vhost, .name] | @tsv')
+}
+
 # Falha se o broker divergir do esperado nas definitions (usuários, policies, guest e tipo das filas).
 validate() {
   local expected actual user vhost name type
@@ -105,6 +129,11 @@ validate() {
   [[ "$expected" == "$actual" ]] || { echo "policies: expected ${expected}, found ${actual}" >&2; exit 1; }
 
   [[ "$(http_code /users/guest)" == "404" ]] || { echo "guest still exists" >&2; exit 1; }
+
+  # Operator policies do template (o import é aditivo): devem existir no broker.
+  while IFS=$'\t' read -r vhost name; do
+    [[ "$(http_code "/operator-policies/$(uri "$vhost")/$(uri "$name")")" == "200" ]] || { echo "operator policy missing: ${vhost}/${name}" >&2; exit 1; }
+  done < <(jq -r '(.operator_policies // [])[] | [.vhost, .name] | @tsv' "$DEFINITIONS_FILE")
 
   # Filas de definitions existem no vhost e são quorum.
   while IFS=$'\t' read -r vhost name; do
@@ -131,6 +160,7 @@ main() {
   fi
   prune_users
   prune_policies
+  sync_operator_policies
   validate
   log "state-digest=$(state_digest)"
   log "ok"

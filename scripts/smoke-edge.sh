@@ -57,7 +57,15 @@ cp scripts/render-definitions.sh "$tmp/scripts/"
 fresh_template() { cp definitions/definitions.template.json "$tmp/definitions/"; }
 fresh_template
 render() { (cd "$tmp" && ./scripts/render-definitions.sh); }
-write_env() { printf 'RABBITMQ_ADMIN_PASSWORD=%s\nRABBITMQ_SMOKE_APP_PASSWORD=%s\n' "$1" "${2:-zz}" > "$tmp/.env"; }
+write_env() { printf 'RABBITMQ_ADMIN_PASSWORD=%s\nRABBITMQ_SMOKE_APP_PASSWORD=%s\nRABBITMQ_CADASTRO_APP_PASSWORD=%s\n' "$1" "${2:-zz}" "${3:-yy}" > "$tmp/.env"; }
+# Mesma conferência do hash do admin, para o usuário cadastro-app (qualquer usuário do template).
+user_hash_matches() {
+  local h raw salt expected
+  h="$(grep -A1 "\"$1\"" "$tmp/definitions/definitions.json" | grep -o '"password_hash": *"[^"]*"' | cut -d'"' -f4)"
+  raw="$(printf '%s' "$h" | openssl base64 -d -A | xxd -p -c100)"; salt="${raw:0:8}"
+  expected="$({ printf '%s' "$salt" | xxd -r -p; printf '%s' "$2"; } | openssl dgst -sha256 -binary | xxd -p -c100)"
+  [[ "${raw:8}" == "$expected" ]]
+}
 # Recalcula de forma independente base64(salt[4] + SHA-256(salt + senha)) e compara com o hash do admin.
 hash_matches() {
   local h raw salt expected
@@ -80,6 +88,12 @@ for pw in 'p@ss w0rd!$x&y|z\1"q#' 'a=b=c' 'ação-ü' ' espaços '; do
 done
 write_env ""
 if render >/dev/null 2>&1; then fail "empty password: render should fail"; else pass "empty password: render fails"; fi
+write_env a smk 'c@d&e|f\1'
+render >/dev/null 2>&1; if user_hash_matches cadastro-app 'c@d&e|f\1' && user_hash_matches smoke-app smk; then pass "cadastro-app and smoke-app hashes match their own passwords"; else fail "cadastro-app/smoke-app hash differs from the .env password"; fi
+printf 'RABBITMQ_ADMIN_PASSWORD=a\nRABBITMQ_SMOKE_APP_PASSWORD=b\n' > "$tmp/.env"
+if render >/dev/null 2>&1; then fail "missing cadastro password: render should fail"; else pass "missing cadastro-app password in the .env: render fails"; fi
+check "rendered definitions keep cadastro-app without management tags and without placeholders" bash -c \
+  '! grep -q "__[A-Z_]*__" "$0/definitions/definitions.json" && grep -A4 "\"cadastro-app\"" "$0/definitions/definitions.json" | grep -q "\"tags\": \[\]"' "$tmp"
 check "random salt: two renders produce different hashes" render_twice_differs
 sed -i 's/__SMOKE_APP_PASSWORD_HASH__/__NEW_PLACEHOLDER__/' "$tmp/definitions/definitions.template.json"
 write_env a
@@ -88,6 +102,14 @@ fresh_template
 # O compose remove as aspas de valores do .env; o render precisa produzir o mesmo hash que o broker valida.
 write_env '"abc"'
 render >/dev/null 2>&1; if hash_matches abc; then pass "quoted password in .env: hash of the unquoted password"; else fail "quoted password in .env: hash differs from what compose gives the provisioner"; fi
+
+# generate-env.sh num .env antigo: a senha nova entra em linha própria, mesmo sem quebra de linha final.
+cp scripts/generate-env.sh "$tmp/scripts/"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$tmp/scripts/render-definitions.sh"; chmod +x "$tmp/scripts/render-definitions.sh"
+printf 'RABBITMQ_ADMIN_PASSWORD=a\nRABBITMQ_SMOKE_APP_PASSWORD=b' > "$tmp/.env"
+(cd "$tmp" && ./scripts/generate-env.sh >/dev/null 2>&1)
+check "generate-env on an old .env without trailing newline: new password on its own line" bash -c \
+  'grep -qx "RABBITMQ_SMOKE_APP_PASSWORD=b" "$0/.env" && grep -q "^RABBITMQ_CADASTRO_APP_PASSWORD=." "$0/.env"' "$tmp"
 
 # ---------------------------------------------------------------- (h) provisionador: bordas
 echo "== (h) provisioner =="

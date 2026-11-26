@@ -21,7 +21,7 @@ config/rabbitmq.conf        configuração do broker (comentários PT-BR); confi
 config/fluent-bit/        fluent-bit.conf, parsers.conf e level.lua (nível GELF numérico) do coletor de logs (log-shipper)
 config/tls.conf + docker-compose.tls.yml   TLS opcional (AMQPS 5671); scripts/generate-certs.sh e scripts/smoke-tls.sh
 definitions/                definitions.template.json (versionado, sem segredos); definitions.json é gerado (gitignored)
-provisioning/provision.sh   remove guest e itens obsoletos e valida o estado (idempotente), via API de management
+provisioning/provision.sh   remove guest e itens obsoletos, aplica operator_policies (o import as ignora) e valida o estado (idempotente), via API de management
 scripts/generate-env.sh     gera o .env (0600) com segredos aleatórios e renderiza as definitions
 scripts/render-definitions.sh  template -> definitions.json com password_hash calculado do .env
 scripts/messaging-network.sh   confere a existência da rede workspace-messaging
@@ -30,7 +30,7 @@ scripts/logs-fallback-check.sh   logs locais retidos e backlog do coletor (somen
 scripts/shipper-api.sh      consulta a API do coletor (imagem distroless, sem shell) a partir de um container descartável
 scripts/backup-definitions.sh   exporta as definitions pela API (saída em backups/, gitignored, 0600)
 scripts/e2e-graylog.sh      e2e real com o Graylog (só local, fora do CI); tests/e2e/graylog_check.py verifica o JSON
-scripts/smoke-test.sh       teste ponta a ponta, incremental (a-e, j, l métricas, m logs, n fallback); tests/smoke/ = cliente pika, gelf-sink/ e logs-fallback.sh
+scripts/smoke-test.sh       teste ponta a ponta, incremental (a-e, j, l métricas, m logs, n fallback, o cadastro-app: permissões, retry, DLQ); tests/smoke/ = cliente pika, gelf-sink/ e logs-fallback.sh
 docs/integration/           insumos Grafana (F01)/Graylog (F02) e add-app.md (usuário, prefixo, policy DLX)
 .github/workflows/ci.yml    shellcheck, gitleaks, trivy fs/image, compose config, smoke, smoke TLS; .gitleaks.toml = exceções justificadas
 docs/adr/                   decisões
@@ -68,3 +68,4 @@ docker compose run --rm provisioner   # reexecuta o provisionamento (idempotente
 - `scripts/e2e-graylog.sh`: e2e REAL broker -> Fluent Bit -> Graylog, **só local** (fora do CI: o runner não tem Graylog); não reinicia
   nada e exige `../graylog` no ar. Rode ao mudar `config/fluent-bit/`, o log do broker, as imagens ou o pipeline/alertas do RabbitMQ no
   Graylog. Verificador JSON em `tests/e2e/graylog_check.py` (imagem do smoke, sem rede).
+- Usuário `cadastro-app` (spec 002): sem configure;  o app NÃO pode chamar QueueDeclare/ExchangeDeclare ativos (só passivo ou nenhum; a topologia vem do definitions); write só `cadastro.events|cadastro.retry`; read só `cadastro.user-import-lines`. Senha `RABBITMQ_CADASTRO_APP_PASSWORD` (o `generate-env.sh` a acrescenta a um `.env` existente). `delivery-limit` da fila principal vai em **operator policy** (`cadastro-limits`) porque uma fila só recebe uma policy; o import ignora `operator_policies`, então quem aplica é o provisionador (rebuild da imagem: `docker compose build provisioner`). Ver `docs/integration/add-app.md`.

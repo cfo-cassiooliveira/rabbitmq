@@ -13,6 +13,13 @@
       "hashing_algorithm": "rabbit_password_hashing_sha256",
       "tags": [],
       "limits": {}
+    },
+    {
+      "name": "cadastro-app",
+      "password_hash": "__CADASTRO_APP_PASSWORD_HASH__",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": [],
+      "limits": {}
     }
   ],
   "vhosts": [
@@ -29,7 +36,8 @@
   ],
   "permissions": [
     { "user": "admin", "vhost": "dev", "configure": ".*", "write": ".*", "read": ".*" },
-    { "user": "smoke-app", "vhost": "dev", "configure": "^smoke(-consumer)?\\.", "write": "^smoke(-consumer)?\\.", "read": "^smoke(-consumer)?\\." }
+    { "user": "smoke-app", "vhost": "dev", "configure": "^smoke(-consumer)?\\.", "write": "^smoke(-consumer)?\\.", "read": "^smoke(-consumer)?\\." },
+    { "user": "cadastro-app", "vhost": "dev", "configure": "", "write": "^(cadastro\\.events|cadastro\\.retry)$", "read": "^cadastro\\.user-import-lines$" }
   ],
   "topic_permissions": [],
   "parameters": [],
@@ -47,18 +55,62 @@
         "overflow": "reject-publish",
         "delivery-limit": 5
       }
+    },
+    {
+      "vhost": "dev",
+      "name": "cadastro-dlx",
+      "pattern": "^cadastro\\.user-import-lines$",
+      "apply-to": "queues",
+      "priority": 0,
+      "definition": {
+        "dead-letter-exchange": "cadastro.dlx",
+        "dead-letter-strategy": "at-least-once",
+        "overflow": "reject-publish"
+      }
+    },
+    {
+      "vhost": "dev",
+      "name": "cadastro-retry",
+      "pattern": "^cadastro\\.user-import-lines\\.retry$",
+      "apply-to": "queues",
+      "priority": 0,
+      "definition": {
+        "message-ttl": 30000,
+        "dead-letter-exchange": "cadastro.events"
+      }
+    }
+  ],
+  "operator_policies": [
+    {
+      "vhost": "dev",
+      "name": "cadastro-limits",
+      "pattern": "^cadastro\\.user-import-lines$",
+      "apply-to": "queues",
+      "priority": 0,
+      "definition": {
+        "delivery-limit": 5
+      }
     }
   ],
   "exchanges": [
     { "name": "smoke.events", "vhost": "dev", "type": "topic", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
-    { "name": "smoke.dlx", "vhost": "dev", "type": "topic", "durable": true, "auto_delete": false, "internal": false, "arguments": {} }
+    { "name": "smoke.dlx", "vhost": "dev", "type": "topic", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "cadastro.events", "vhost": "dev", "type": "topic", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "cadastro.retry", "vhost": "dev", "type": "topic", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "cadastro.dlx", "vhost": "dev", "type": "topic", "durable": true, "auto_delete": false, "internal": false, "arguments": {} }
   ],
   "queues": [
     { "name": "smoke-consumer.ping", "vhost": "dev", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum" } },
-    { "name": "smoke-consumer.ping.dlq", "vhost": "dev", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum" } }
+    { "name": "smoke-consumer.ping.dlq", "vhost": "dev", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum" } },
+    { "name": "cadastro.user-import-lines", "vhost": "dev", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum" } },
+    { "name": "cadastro.user-import-lines.retry", "vhost": "dev", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum" } },
+    { "name": "cadastro.user-import-lines.dlq", "vhost": "dev", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum" } }
   ],
   "bindings": [
     { "source": "smoke.events", "vhost": "dev", "destination": "smoke-consumer.ping", "destination_type": "queue", "routing_key": "smoke.ping.sent.v1", "arguments": {} },
-    { "source": "smoke.dlx", "vhost": "dev", "destination": "smoke-consumer.ping.dlq", "destination_type": "queue", "routing_key": "#", "arguments": {} }
+    { "source": "smoke.dlx", "vhost": "dev", "destination": "smoke-consumer.ping.dlq", "destination_type": "queue", "routing_key": "#", "arguments": {} },
+    { "source": "cadastro.events", "vhost": "dev", "destination": "cadastro.user-import-lines", "destination_type": "queue", "routing_key": "cadastro.user-import-line.accepted.v1", "arguments": {} },
+    { "source": "cadastro.retry", "vhost": "dev", "destination": "cadastro.user-import-lines.retry", "destination_type": "queue", "routing_key": "cadastro.user-import-line.accepted.v1", "arguments": {} },
+    { "source": "cadastro.dlx", "vhost": "dev", "destination": "cadastro.user-import-lines.dlq", "destination_type": "queue", "routing_key": "#", "arguments": {} }
   ]
 }

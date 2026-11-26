@@ -84,6 +84,7 @@ services:
     environment:
       AMQP_HOST: rabbitmq
       SMOKE_APP_PASSWORD: ${RABBITMQ_SMOKE_APP_PASSWORD:?defina RABBITMQ_SMOKE_APP_PASSWORD no .env}
+      CADASTRO_APP_PASSWORD: ${RABBITMQ_CADASTRO_APP_PASSWORD:?defina RABBITMQ_CADASTRO_APP_PASSWORD no .env}
     # Endurecimento: sem privilégios, sistema de arquivos somente leitura e teto de memória (o cliente só usa AMQP).
     mem_limit: 128m
     read_only: true

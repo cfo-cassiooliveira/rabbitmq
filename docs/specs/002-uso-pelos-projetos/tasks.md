@@ -33,7 +33,7 @@ Status: **Aceito** (2026-11-25); MVP até **04/12/2026**. Onda 0 concluída (dec
   - Status (2026-11-26): E2E real **passou** (11/11, 5.000 linhas, 4.950 criadas sem perda nem duplicata, 409 no reenvio, idempotência, retry/DLQ, zero dado do CSV em logs e payloads AMQP); `cadastro/scripts/e2e-import.sh`, relatório em [e2e-report.md](e2e-report.md). Quality Gate aprovado (ver acima). Os PRs do MVP foram mergeados na `master` dos quatro repositórios (rabbitmq #5, Keycloak #12, legado #13, cadastro #11).
 - [x] **J1** Job de limpeza por retenção no Cadastro (cadastro #12, 2026-11-26): lotes com relatório vencido (90 dias, com as linhas e os dados cifrados das que terminaram em erro) e auditoria com mais de 12 meses, a cada 6 h, em lotes de 500 (spec §8 Q9). Testes: unitários do caso de uso e integração com SQL Server real. Decisão de 2026-11-26: lote esquecido em *aguardando confirmação* é cancelado após **7 dias**, com os dados das linhas apagados (cadastro, branch DEV-013).
 - [x] **D1** README da importação (diagrama, como rodar, CSV de exemplo com linhas inválidas; screenshots no lugar do GIF) em `cadastro/docs/user-imports.md`.
-- [ ] **D2** Atualizar o card do projeto no Site Principal e a tabela do README de perfil (`cfo-cassiooliveira`), que ainda não mencionam a importação em lote.
+- [x] **D2** Card do projeto no Site Principal e tabela do README de perfil (`cfo-cassiooliveira`) citam a importação em lote (Site-Principal #10 e cfo-cassiooliveira #7, 2026-11-26).
 - [ ] **O1** (fora do MVP, spec §8 Q1) Painel do lote/fila no Grafana, alerta de DLQ não vazia, stream no Graylog.
 
 ## Depois do MVP

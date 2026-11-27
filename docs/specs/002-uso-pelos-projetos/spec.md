@@ -43,7 +43,7 @@ Então a API responde 4xx/5xx em Problem Details, sem criar lote
 ```
 ```gherkin
 Cenário: sem permissão
-Quando um usuário sem a role user-importer (ou sem OTP recente) chama /api/v1/user-imports
+Quando um usuário sem a role user-importer (ou sem segundo fator; nas ações que mudam estado, sem OTP recente) chama /api/v1/user-imports
 Então recebe 403 e o acesso negado é auditado
 ```
 
@@ -101,7 +101,7 @@ Então vê progresso por estado, o detalhe por linha, pode reprocessar erros e b
 
 ## 4. Requisitos não funcionais
 
-- **Segurança**: role `user-importer` + OTP recente; service account do importador separada da de leitura; antivírus fail-closed; trilha de auditoria; `cadastro-app` no broker com permissões mínimas (configure nenhum; write só em `cadastro.events` e `cadastro.retry`; read só em `cadastro.user-import-lines`).
+- **Segurança**: role `user-importer` + sessão com segundo fator, e OTP recente nas ações que mudam estado (ADR-0010 do cadastro); service account do importador separada da de leitura; antivírus fail-closed; trilha de auditoria; `cadastro-app` no broker com permissões mínimas (configure nenhum; write só em `cadastro.events` e `cadastro.retry`; read só em `cadastro.user-import-lines`).
 - **LGPD**: só ids na mensagem; dados pessoais cifrados e apagados ao fim da linha; arquivo descartado após o processamento; CPF/e-mail fora de qualquer log (Graylog já mascara).
 - **Confiabilidade**: Outbox, publisher confirms, consumidor idempotente, retry com TTL, DLQ (Art. VII).
 - **Observabilidade**: logs estruturados com `trace_id`/`correlation_id`; métricas de lote e fila no Grafana (opcional).

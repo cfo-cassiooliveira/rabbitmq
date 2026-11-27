@@ -37,6 +37,27 @@ Status: **Aceito** (2026-11-25); MVP até **04/12/2026**. Onda 0 concluída (dec
 - [ ] **O1** (fora do MVP, spec §8 Q1) Painel do lote/fila no Grafana, alerta de DLQ não vazia, stream no Graylog.
 
 ## Depois do MVP
-- [ ] XLSX e PDF com layout fixo (novos `IExtratorDeUsuarios`).
-- [ ] ADR-0008: evento `identity.user.migrated.v1` consumido pelo Legado.
-- [ ] Keycloak: claims customizados e login social.
+
+Plano aprovado em 2026-11-26 (equipe de agentes, até 3 em paralelo). Cada onda termina utilizável; o que não couber sai inteiro.
+
+### Onda 1
+Base: `master` do `cadastro` (`fe50a59`) com Quality Gate aprovado em 2026-11-26 (cobertura 92,4%; código novo 91,6%, 0 issues novas) e 731 testes .NET.
+
+- [x] **P1** OTP recente só nas ações que mudam estado; leituras exigem a role e sessão com segundo fator, sem limite de idade, e a renovação do token atualiza as roles (cadastro #17, ADR-0010 do cadastro). E2E real 11/11 e Quality Gate aprovado.
+- [x] **P2** Testes instáveis: outbox/consumidor sob carga e arquivo temporário preso no Windows (cadastro #17).
+- [x] **O1** Painel da fila/retry/DLQ no Grafana, alerta de retry parada e acesso negado no stream de segurança do Graylog (workspace-grafana #6, graylog #17).
+- [x] **P3** Claim `account_origin` (importada ou migrada) no client do Cadastro, de atributo que só o administrador altera (Keycloak #13).
+
+### Onda 2
+- [ ] **P4** XLSX e PDF na importação: **adiado** (decisão de 2026-11-27). Três revisões reprovaram arquivos hostis que derrubam o processo (estouro de pilha no PDF e no XLSX; memória no XLSX). Retomar com leitura própria ou em processo isolado; o trabalho está na branch local `wip/xlsx-import` do `cadastro` (não integrar como está).
+- [x] **P5** Login social só com Google, apenas para contas existentes; credenciais só no `.env` (Keycloak #14, ADR-0009 do Keycloak). Quality Gate aprovado. Falta o teste manual com uma conta Google.
+
+### Onda 3
+- [ ] **P6** ADR-0008: evento `identity.user.migrated.v1` consumido pelo Legado, que responde com um evento de resultado para o relatório não perder informação (`rabbitmq`, `cadastro`, `legado-cadastro-usuarios`). **Adiado** para depois do plano de 2026-11-26.
+
+### Onda 4
+- [x] **P7** Fechamento em 2026-11-27 sobre as versões finais: E2E real com 5.000 linhas 11/11 (`cadastro` `6e9105c`); Quality Gate aprovado no `cadastro` (805 testes .NET) e no `Keycloak` (415 testes). Pendente: teste manual do login com Google.
+
+Corrigido no caminho: o nginx do front recusava envios acima de 1 MB (cadastro #18) e os rótulos do resumo vazavam em telas estreitas (cadastro #19).
+
+Fora deste plano: Fluent Bit 5.2.1 (issue #3, a partir de 2026-12-08).

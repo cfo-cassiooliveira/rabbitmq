@@ -50,13 +50,13 @@ Base: `master` do `cadastro` (`fe50a59`) com Quality Gate aprovado em 2026-11-26
 
 ### Onda 2
 - [ ] **P4** XLSX e PDF na importação: **adiado** (decisão de 2026-11-27). Três revisões reprovaram arquivos hostis que derrubam o processo (estouro de pilha no PDF e no XLSX; memória no XLSX). Retomar com leitura própria ou em processo isolado; o trabalho está na branch local `wip/xlsx-import` do `cadastro` (não integrar como está).
-- [x] **P5** Login social só com Google, apenas para contas existentes; credenciais só no `.env` (Keycloak #14, ADR-0009 do Keycloak). Quality Gate aprovado. Falta o teste manual com uma conta Google.
+- [x] **P5** Login social só com Google, apenas para contas existentes; credenciais só no `.env` (Keycloak #14, ADR-0009 do Keycloak). Quality Gate aprovado. Teste manual com conta Google aprovado pelo responsável em 2026-11-27 (negação sem conta, vínculo com a senha e segundo acesso direto).
 
 ### Onda 3
 - [ ] **P6** ADR-0008: evento `identity.user.migrated.v1` consumido pelo Legado, que responde com um evento de resultado para o relatório não perder informação (`rabbitmq`, `cadastro`, `legado-cadastro-usuarios`). **Adiado** para depois do plano de 2026-11-26.
 
 ### Onda 4
-- [x] **P7** Fechamento em 2026-11-27 sobre as versões finais: E2E real com 5.000 linhas 11/11 (`cadastro` `6e9105c`); Quality Gate aprovado no `cadastro` (805 testes .NET) e no `Keycloak` (415 testes). Pendente: teste manual do login com Google.
+- [x] **P7** Fechamento em 2026-11-27 sobre as versões finais: E2E real com 5.000 linhas 11/11 (`cadastro` `6e9105c`); Quality Gate aprovado no `cadastro` (805 testes .NET) e no `Keycloak` (415 testes). Teste manual do login com Google aprovado.
 
 Corrigido no caminho: o nginx do front recusava envios acima de 1 MB (cadastro #18) e os rótulos do resumo vazavam em telas estreitas (cadastro #19).
 

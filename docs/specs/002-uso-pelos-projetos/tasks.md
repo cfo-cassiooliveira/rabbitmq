@@ -4,16 +4,16 @@ Status: **Aceito** (2026-11-25); MVP até **04/12/2026**. Onda 0 concluída (dec
 
 ## Onda 0 — Aprovação
 - [x] **A1** Perguntas respondidas (spec §8); spec, plano e ADRs 0005/0006 aceitos em 2026-11-25.
-- [ ] **A2** Spike: publicar e consumir 1 mensagem com `cadastro-app` (sem código de produção).
+- [x] **A2** Spike: publicar e consumir 1 mensagem com `cadastro-app` (sem código de produção). Feito (sem spike separado: o `cadastro-app` é exercitado pela seção **o** do smoke e pela implementação; conferido em 2026-11-27).
 
 ## Onda 1 — Fundações (repositórios distintos, paralelizáveis)
 - [x] **R1** [rabbitmq] `cadastro-app` com permissões exatas no `definitions.template.json`; `generate-env.sh` e `render-definitions.sh` aceitam a senha. *Teste*: smoke seção **o** (permissões: recusa fora do prefixo, `configure` negado).
 - [x] **R2** [rabbitmq] Exchanges `cadastro.events`, `cadastro.retry`, `cadastro.dlx`; filas `cadastro.user-import-lines`, `.retry`, `.dlq` (quorum); bindings.
 - [x] **R3** [rabbitmq] Policies (DLX at-least-once + `reject-publish`; retry TTL 30 s). *Teste*: smoke prova retry após nack e DLQ após esgotar; `smoke-edge.sh` cobre a renderização. Atualizar `docs/integration/add-app.md` e `docs/INDEX.md`.
-- [ ] **L1** [legado] SQL Server na rede `workspace-data` por override de compose. *Teste*: conexão a partir de container na rede.
-- [ ] **L2** [legado] Chave HMAC do Cadastro restrita a consulta e marcação; `legacy_app` com DENY no esquema `import`. *Teste*: integração (Testcontainers) cobrindo 200 nas rotas permitidas e 403 em `credential-verifications`.
-- [ ] **K0** [Keycloak] Client `cadastro-importer` (menor privilégio), role `user-importer`, atributo `importLineId`, SMTP Mailpit. *Teste*: smoke do realm.
-- [ ] **C1** [cadastro] Esquema `import` (migrations por `cadastro_migrator`, runtime `cadastro_app`), entidades Lote/Linha, cifra dos dados pessoais, ADR-0007. *Teste*: unitários de domínio e integração das migrations.
+- [x] **L1** [legado] SQL Server na rede `workspace-data` por override de compose. *Teste*: conexão a partir de container na rede. Feito (legado-cadastro-usuarios #13).
+- [x] **L2** [legado] Chave HMAC do Cadastro restrita a consulta e marcação; `legacy_app` com DENY no esquema `import`. *Teste*: integração (Testcontainers) cobrindo 200 nas rotas permitidas e 403 em `credential-verifications`. Feito (legado-cadastro-usuarios #13).
+- [x] **K0** [Keycloak] Client `cadastro-importer` (menor privilégio), role `user-importer`, atributo `importLineId`, SMTP Mailpit. *Teste*: smoke do realm. Feito (Keycloak #12).
+- [x] **C1** [cadastro] Esquema `import` (migrations por `cadastro_migrator`, runtime `cadastro_app`), entidades Lote/Linha, cifra dos dados pessoais, ADR-0007. *Teste*: unitários de domínio e integração das migrations. Feito (cadastro #11).
 
 ## Onda 2 — Entrada (sequência no `cadastro`)
 - [x] **C2** Upload `POST /api/v1/user-imports`: ClamAV fail-closed, validação em streaming (cabeçalho, 5 MB, 5.000 linhas, e-mail, CPF, duplicados), extrator CSV atrás de `IExtratorDeUsuarios`. *Teste*: tabela de arquivos válidos e inválidos; ClamAV indisponível recusa.
@@ -34,7 +34,7 @@ Status: **Aceito** (2026-11-25); MVP até **04/12/2026**. Onda 0 concluída (dec
 - [x] **J1** Job de limpeza por retenção no Cadastro (cadastro #12, 2026-11-26): lotes com relatório vencido (90 dias, com as linhas e os dados cifrados das que terminaram em erro) e auditoria com mais de 12 meses, a cada 6 h, em lotes de 500 (spec §8 Q9). Testes: unitários do caso de uso e integração com SQL Server real. Decisão de 2026-11-26: lote esquecido em *aguardando confirmação* é cancelado após **7 dias**, com os dados das linhas apagados (cadastro, branch DEV-013).
 - [x] **D1** README da importação (diagrama, como rodar, CSV de exemplo com linhas inválidas; screenshots no lugar do GIF) em `cadastro/docs/user-imports.md`.
 - [x] **D2** Card do projeto no Site Principal e tabela do README de perfil (`cfo-cassiooliveira`) citam a importação em lote (Site-Principal #10 e cfo-cassiooliveira #7, 2026-11-26).
-- [ ] **O1** (fora do MVP, spec §8 Q1) Painel do lote/fila no Grafana, alerta de DLQ não vazia, stream no Graylog.
+- **O1** (fora do MVP, spec §8 Q1): painel, alertas e Graylog, concluída depois; ver *Depois do MVP*.
 
 ## Depois do MVP
 

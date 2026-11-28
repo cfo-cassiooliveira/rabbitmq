@@ -10,13 +10,17 @@ on:
     branches: [master, 'DEV-*']
   pull_request:
 
+# O token do job só lê o repositório: nenhum passo escreve nele.
 permissions:
   contents: read
 
+# Push novo cancela a execução anterior da branch; na master a execução em andamento não é cancelada.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
+# Ferramentas e imagens por digest (e actions por SHA): uma tag republicada não muda o que o CI executa. Custo:
+# atualização manual, e o digest das imagens do compose é repetido aqui.
 env:
   SHELLCHECK_IMAGE: koalaman/shellcheck:v0.10.0@sha256:2097951f02e735b613f4a34de20c40f937a6c8f18ecb170612c88c34517221fb
   GITLEAKS_IMAGE: zricethezav/gitleaks:v8.28.0@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854
@@ -33,6 +37,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker run --rm -v "$PWD:/mnt" -w /mnt "$SHELLCHECK_IMAGE" -S warning scripts/*.sh provisioning/*.sh tests/smoke/*.sh
 
+  # Histórico completo: um segredo removido em commit posterior continua acessível no repositório.
   secrets:
     name: gitleaks (segredos em todo o histórico)
     runs-on: ubuntu-latest
@@ -92,6 +97,7 @@ jobs:
       # Complemento TLS: aqui só a sintaxe; o fluxo completo roda no job smoke-tls.
       - run: ./scripts/generate-certs.sh && docker compose -f docker-compose.yml -f docker-compose.tls.yml --profile tls config -q
 
+  # Sobe o broker de verdade: erro em definitions, permissões ou policies não aparece em lint nem em "compose config".
   smoke:
     name: broker + provisionamento + smoke (inclui fallback de logs)
     runs-on: ubuntu-latest

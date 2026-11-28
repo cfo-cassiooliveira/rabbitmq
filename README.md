@@ -3,6 +3,20 @@
 RabbitMQ 4.3 (single-node) em Docker para os projetos do workspace, com topologia, usuários e permissões como código,
 métricas Prometheus e logs com fallback local. Índice de decisões e specs: [docs/INDEX.md](docs/INDEX.md).
 
+## Destaques técnicos
+
+- [Topologia como código](definitions/definitions.template.json) e [render](scripts/render-definitions.sh): mudança revisável por diff, sem senha nem hash no git.
+- [Provisionador idempotente](provisioning/provision.sh): o import do RabbitMQ só acrescenta, e usuários ou policies obsoletos ficariam no broker.
+- [DLQ e retry com espera](config/rabbitmq.conf): mensagem com defeito sai da fila principal e falha transitória volta após 30 s.
+- [Permissões por app](docs/adr/0003-seguranca-usuarios-tls-segredos.md): a credencial de um app não alcança as filas de outro serviço.
+- [Logs com buffer em disco](config/fluent-bit/fluent-bit.conf): Graylog fora não interrompe a coleta (dentro do teto do buffer e da rotação).
+- [CI com broker real](.github/workflows/ci.yml): permissões, retry, DLQ e TLS são exercitados, não só validados por lint.
+
+## Uso de IA
+
+Este projeto foi desenvolvido com auxílio de IA (**Claude Code**), na implementação e em code review. As decisões de
+arquitetura estão registradas nas ADRs, e as mudanças passam por testes automatizados e CI antes de entrar na `master`.
+
 ## Requisitos do host
 
 Docker Desktop (Compose v2), bash (Git Bash no Windows), `openssl`, `xxd` e `curl`. Memória livre: 1 GiB para o broker.

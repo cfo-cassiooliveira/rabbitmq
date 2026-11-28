@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Gera a CA local e o certificado do servidor para o profile TLS (AMQPS 5671) em certs/ (gitignored; nada é versionado).
+# Gera a CA local e o certificado do servidor para o complemento TLS (AMQPS 5671) em certs/ (gitignored; nada é versionado).
 # A CA é descartável e só vale para desenvolvimento: clientes que a confiam passam a confiar em QUALQUER certificado
 # emitido por ela, então a chave da CA (ca.key) fica apenas aqui, em 0600, e nunca é montada em container.
 # Não sobrescreve certificados existentes (apague certs/ para renovar). Nenhuma senha/segredo é impresso.

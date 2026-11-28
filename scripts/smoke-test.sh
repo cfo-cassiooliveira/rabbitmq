@@ -100,6 +100,7 @@ run_phase persist-verify
 run_phase cleanup
 
 # ---------------------------------------------------------------- (e) idempotência do provisionador
+# O provisionador roda a cada "up": se a segunda execução mudasse algo, cada subida alteraria o broker.
 echo "== (e) provisioner =="
 run1="$(docker compose run --rm provisioner 2>&1)"; rc1=$?
 run2="$(docker compose run --rm provisioner 2>&1)"; rc2=$?
@@ -170,6 +171,8 @@ fi
 
 
 # ---------------------------------------------------------------- (o) cadastro-app: permissões, retry e DLQ
+# Testa o contrato de que o app depende: recusa fora das permissões, volta da fila de retry após o TTL e chegada à DLQ
+# por rejeição e por delivery-limit. Um erro no template só apareceria no app, como mensagem sumida ou 403.
 echo "== (o) cadastro-app =="
 cadastro_password="$(env_value RABBITMQ_CADASTRO_APP_PASSWORD)"
 check "cadastro-app authenticates" docker compose exec -T rabbitmq rabbitmqctl -q authenticate_user cadastro-app "$cadastro_password"

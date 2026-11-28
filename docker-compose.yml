@@ -4,6 +4,8 @@
 name: rabbitmq
 
 # Base comum dos coletores de log (real e de teste).
+# O coletor só lê um arquivo e envia GELF: roda sem capabilities, com raiz somente leitura e teto de memória, para que uma
+# falha nele tenha pouco alcance sobre o host.
 x-log-shipper: &log-shipper
   # Imagem distroless (sem shell nem curl): sem healthcheck no compose; a vivacidade é sondada de fora (scripts/shipper-api.sh).
   image: fluent/fluent-bit:4.2.8@sha256:6806769c10acf11b41d14083b3101a24433b4ca113a1ab7a6b1a1b7cad86a7e8
@@ -46,6 +48,8 @@ services:
         bind:
           create_host_path: false
     networks: [workspace-messaging, rabbitmq-internal, rabbitmq-metrics]
+    # "healthy" exige a aplicação rodando e sem alarme local (memória ou disco): com alarme o broker bloqueia publicadores,
+    # então uma porta aberta não bastaria para liberar os dependentes.
     healthcheck:
       test: ["CMD-SHELL", "rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_local_alarms"]
       interval: 10s
@@ -56,6 +60,8 @@ services:
 
   provisioner:
     # Remove o guest e itens obsoletos e valida a topologia (idempotente) pela API de management.
+    # Existe porque o import de definitions só acrescenta e ignora operator_policies. O script é copiado para a imagem:
+    # mudança nele só vale depois de "docker compose build provisioner".
     build: ./provisioning
     depends_on:
       rabbitmq: { condition: service_healthy }
@@ -139,6 +145,8 @@ services:
     networks: [logs-test]
     restart: "no"
 
+# Redes separadas por função: os apps alcançam o broker sem entrar na rede do Graylog, e o coletor envia ao Graylog sem
+# entrar na rede dos apps.
 networks:
   # Rede compartilhada com nome fixo, criada por este projeto: os apps entram com "external: true".
   workspace-messaging:

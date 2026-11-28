@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Testes de borda da Onda 1 (T01-T04): permissões, render com senhas especiais, provisionador e resiliência.
-# Complementa scripts/smoke-test.sh sem a suíte AMQP da T05. Requer o .env e o broker no ar.
+# Testes de borda: permissões, render com senhas especiais, provisionador, falhas do cliente AMQP, métricas e coletor de
+# logs. Complementa scripts/smoke-test.sh (caminho principal). Requer o .env e o broker no ar.
 # Uso: ./scripts/smoke-edge.sh                      (restart pontual do broker; sem derrubar o volume)
 #      SMOKE_DISRUPTIVE=1 ./scripts/smoke-edge.sh   (inclui "docker compose down/up" do broker)
 set -uo pipefail

@@ -2,6 +2,8 @@
 # Gera definitions/definitions.json (gitignored) a partir do template, calculando o password_hash dos
 # usuários com as senhas do .env. Formato do hash (RabbitMQ): base64(salt[4 bytes] + SHA-256(salt + senha)).
 # Com RENDER_SALT_HEX (8 hex) o sal fica fixo, para testes determinísticos (scripts/smoke-test.sh).
+# Por que gerar o arquivo: a topologia fica versionada e revisável por diff sem senha nem hash no git. Custo: um passo a
+# mais a cada mudança, e o sal novo altera o arquivo mesmo sem mudança no template (o que faz o broker reimportar).
 set -euo pipefail
 
 cd "$(dirname "$0")/.." || exit 1

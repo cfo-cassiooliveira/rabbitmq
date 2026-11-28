@@ -1,5 +1,7 @@
 # Complemento opcional de TLS (AMQPS 5671). Uso (depois de ./scripts/generate-certs.sh):
-#   docker compose -f docker-compose.yml -f docker-compose.tls.yml --profile tls up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d --force-recreate --no-deps rabbitmq
+# O profile "tls" serve só ao cliente de teste (smoke-tls); quem liga o listener é este arquivo.
+# É um complemento, e não o padrão, para o ambiente local não exigir CA confiada em cada cliente; o 5672 continua ativo.
 # Sem este arquivo o broker continua só em texto plano (perfil padrão). Smoke: ./scripts/smoke-tls.sh
 services:
   rabbitmq:

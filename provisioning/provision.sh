@@ -3,6 +3,8 @@
 # se garante o que ele não faz (remover o guest e usuários/policies obsoletos) e se valida o resultado.
 # Escopo: só o que o template gerencia (vhosts do definitions.json e seus usuários/policies); o resto é preservado.
 # Pode rodar a cada "docker compose up"/"run": a segunda execução não altera nada.
+# Também aplica as operator_policies, que o import ignora. A validação ao final cobre usuários, guest, quantidade de
+# policies, operator policies e tipo das filas; não compara permissões nem o conteúdo das policies.
 set -euo pipefail
 
 : "${RABBITMQ_API_URL:?RABBITMQ_API_URL is required}"
@@ -143,6 +145,7 @@ validate() {
 }
 
 # Resumo normalizado e ordenado do estado (sem dados voláteis); duas execuções seguidas devem dar o mesmo valor.
+# A idempotência é verificada pelo estado, não só pelo código de saída: o smoke compara o resumo de duas execuções.
 state_digest() {
   {
     api GET /users | jq -c 'map({name, tags}) | sort_by(.name)'
